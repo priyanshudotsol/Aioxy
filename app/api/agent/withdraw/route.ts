@@ -3,6 +3,8 @@ import { isAddress, verifyMessage, type Address, type Hex } from "viem";
 import { store } from "@/lib/store";
 import { openKey } from "@/lib/vault";
 import { sweepHome } from "@/lib/settle";
+import { burnCompleteSets } from "@/lib/agenttrader";
+import { liveRounds } from "@/lib/indexer";
 import { internalAuthorized } from "@/lib/internal";
 import { withdrawMessage } from "@/lib/agentkey";
 
@@ -55,6 +57,13 @@ export async function POST(req: NextRequest) {
   const key = openKey(agent.sealedKey) as Hex | null;
   if (!key) return NextResponse.json({ error: "agent key unreadable" }, { status: 409 });
 
+  // Anything the agent minted but never sold sits as a complete set, which is
+  // collateral in the wrong form and invisible to a tUSDC sweep. Turn it back
+  // into collateral first, or "withdraw all" quietly returns nothing while the
+  // wallet still holds the money.
+  const live = await liveRounds(24).catch(() => []);
+  const recovered = await burnCompleteSets(key, live);
+
   const res = await sweepHome(key, owner as Address, amount);
-  return NextResponse.json({ ...res, agent: agent.address, owner });
+  return NextResponse.json({ ...res, recovered, agent: agent.address, owner });
 }

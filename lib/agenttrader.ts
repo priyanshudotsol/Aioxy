@@ -2,7 +2,8 @@ import "server-only";
 import { createPublicClient, createWalletClient, http, parseAbi, type Address, type Hex } from "viem";
 import { somniaTestnet } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
-import { SOMNIA_TESTNET_ADDRESSES, binaryPoolWriteAbi, ORDER_KIND } from "@somnia-chain/markets-sdk";
+import { SOMNIA_TESTNET_ADDRESSES, binaryPoolWriteAbi, erc6909Abi, ORDER_KIND } from "@somnia-chain/markets-sdk";
+import { outcomeIds } from "./indexer";
 import type { Direction } from "./store";
 import { PROB_SCALE, QTY_SCALE, RPC_URL } from "./config";
 
@@ -200,11 +201,36 @@ export async function agentTakeDownViaMint(opts: {
     });
     const rcpt = await client.waitForTransactionReceipt({ hash });
     if (rcpt.status !== "success") {
-      return { filled: false, mintTx, error: "YES leg did not sell — holding a complete set" };
+      const undo = await unwind(key, pool, contracts);
+      return { filled: false, mintTx, error: `YES leg did not sell${undo}` };
     }
     return { filled: true, txHash: hash, mintTx, approvalTx: approvalTx ?? undefined };
   } catch (e) {
-    return { filled: false, mintTx, error: `sell leg failed: ${msg(e)}` };
+    // The mint has already spent the collateral at this point. Leaving it as a
+    // complete set strands it: no trade is recorded, so nothing settles it and
+    // nothing sweeps it, and the wallet simply reads as empty. Put it back.
+    const undo = await unwind(key, pool, contracts);
+    return { filled: false, mintTx, error: `sell leg failed: ${msg(e)}${undo}` };
+  }
+}
+
+/** Burn a just-minted set back to collateral. Reported, never thrown. */
+async function unwind(key: Hex, pool: Address, contracts: number): Promise<string> {
+  const account = privateKeyToAccount(key);
+  const wallet = createWalletClient({ account, chain: somniaTestnet, transport: http(RPC_URL) });
+  try {
+    const hash = await wallet.writeContract({
+      address: pool,
+      abi: binaryPoolWriteAbi,
+      functionName: "burnSet",
+      args: [BigInt(Math.round(contracts * QTY_SCALE))],
+    });
+    const rcpt = await pub().waitForTransactionReceipt({ hash });
+    return rcpt.status === "success"
+      ? " — set burned back to collateral"
+      : " — BURN REVERTED, collateral is parked in a complete set";
+  } catch (e) {
+    return ` — BURN FAILED (${msg(e)}), collateral is parked in a complete set`;
   }
 }
 
@@ -241,3 +267,79 @@ export function sizeFor(balance: number, price: number, risk: Risk): number {
 
 const msg = (e: unknown) =>
   String(e instanceof Error ? (e as { shortMessage?: string }).shortMessage ?? e.message : e).slice(0, 200);
+
+/**
+ * Burn any complete sets an agent is sitting on, back into collateral.
+ *
+ * A complete set is one YES and one NO of the same market. It is worth exactly
+ * 1.00 at settlement whichever way the round goes, so holding one is not a
+ * position — it is collateral that has been parked in the wrong form.
+ *
+ * Agents end up holding them because the synthetic DOWN route mints a set and
+ * then sells the YES leg, and the second half can fail after the first half has
+ * already spent the money. When that happened there was nothing to notice it:
+ * the trade was never recorded, so nothing settled it and nothing swept it, and
+ * the wallet just read as empty. `burnSet` undoes the mint while the market is
+ * still open, which is better than waiting for a resolution that roughly 40% of
+ * rounds on this venue never get.
+ */
+export async function burnCompleteSets(
+  key: Hex,
+  markets: { marketId: string; binaryPoolAddress: string; yesTokenId?: string; noTokenId?: string }[],
+): Promise<{ burned: number; txs: string[]; errors: string[] }> {
+  const account = privateKeyToAccount(key);
+  const wallet = createWalletClient({ account, chain: somniaTestnet, transport: http(RPC_URL) });
+  const client = pub();
+  const out = { burned: 0, txs: [] as string[], errors: [] as string[] };
+
+  const singleton = await client
+    .readContract({
+      address: SOMNIA_TESTNET_ADDRESSES.binarySettlement as Address,
+      abi: parseAbi(["function outcomeToken() view returns (address)"]),
+      functionName: "outcomeToken",
+    })
+    .catch(() => null);
+  if (!singleton) return { ...out, errors: ["could not resolve the outcome token"] };
+
+  for (const m of markets) {
+    const ids = m.yesTokenId && m.noTokenId
+      ? { yes: m.yesTokenId, no: m.noTokenId }
+      : await outcomeIds(m.marketId).catch(() => null);
+    if (!ids) continue;
+
+    const [yes, no] = await Promise.all([
+      client.readContract({
+        address: singleton as Address, abi: erc6909Abi,
+        functionName: "balanceOf", args: [account.address, BigInt(ids.yes)],
+      }).catch(() => 0n),
+      client.readContract({
+        address: singleton as Address, abi: erc6909Abi,
+        functionName: "balanceOf", args: [account.address, BigInt(ids.no)],
+      }).catch(() => 0n),
+    ]);
+
+    // Only the matched part is a set. An unmatched leg is a real position and
+    // must be left alone — burning is not allowed to close someone's trade.
+    const qty = (yes as bigint) < (no as bigint) ? (yes as bigint) : (no as bigint);
+    if (qty <= 0n) continue;
+
+    try {
+      const hash = await wallet.writeContract({
+        address: m.binaryPoolAddress as Address,
+        abi: binaryPoolWriteAbi,
+        functionName: "burnSet",
+        args: [qty],
+      });
+      const rcpt = await client.waitForTransactionReceipt({ hash });
+      if (rcpt.status !== "success") {
+        out.errors.push(`burnSet reverted on ${m.marketId}`);
+        continue;
+      }
+      out.burned += Number(qty) / QTY_SCALE;
+      out.txs.push(hash);
+    } catch (e) {
+      out.errors.push(`${m.marketId}: ${msg(e)}`);
+    }
+  }
+  return out;
+}

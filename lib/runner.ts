@@ -352,7 +352,14 @@ class Runner {
     // conviction FRACTION of it, so a strong read stakes the full slice and a
     // marginal one stakes a fifth. Then capped by what the book can actually
     // absorb.
-    const budgeted = sizeFor(balance * decision.contracts, limitPrice, risk);
+    // Minting a complete set costs a whole 1.00 of collateral per contract, and
+    // only gives most of it back when the YES leg sells. Sizing against the net
+    // price instead of that outlay is how a 5.00 budget turned into a 23.00
+    // mint that emptied a wallet: `budget / 0.22` is 23 contracts, and 23
+    // contracts cost 23.00 to mint, not 5.00.
+    const useMint = decision.direction === "DOWN" && downViaMint && bestYesBid != null;
+    const outlay = useMint ? 1 : limitPrice;
+    const budgeted = sizeFor(balance * decision.contracts, outlay, risk);
     const contracts = Math.min(budgeted, Math.floor(available));
     if (contracts < 1) return this.skip(balance < 1 ? "agent-unfunded" : "size-below-one");
 
@@ -365,7 +372,6 @@ class Runner {
     // Already buffered past the quote, so this crosses without paying twice.
     const limit = limitPrice;
 
-    const useMint = decision.direction === "DOWN" && downViaMint && bestYesBid != null;
     const res = useMint
       ? await agentTakeDownViaMint({
           key: key as `0x${string}`,
