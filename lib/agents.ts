@@ -84,19 +84,46 @@ const pctS = (x: number) => `${(x * 100).toFixed(0)}%`;
 const money = (x: number) => `$${x.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
 /**
- * Edge on each side: model probability minus what the book charges. A side with
- * no resting liquidity scores -Infinity so it can never be chosen.
+ * Edge on each side: model probability minus what that side costs to take. A
+ * side with no resting liquidity scores -Infinity so it can never be chosen.
+ *
+ * `floor` is the model probability below which a side is not worth owning
+ * however cheap it looks, and it exists because of a real hole this code had.
+ * A side quoted at 5c against a model that says 15c shows ten points of edge,
+ * and in expectation that is genuine — but it is also a bet the model itself
+ * expects to lose 85% of the time, priced in the tail where the estimate is
+ * least trustworthy, because a probability that far from 0.5 is dominated by
+ * the volatility guess rather than by the distance to the strike.
+ *
+ * Worse, it was not a free choice. Synthetic DOWN costs `1 - bestBid`, so
+ * DOWN's edge reduces to `bestBid - fair`: when the model turns bearish the bid
+ * is already below fair and DOWN becomes unreachable. Without a floor the loser
+ * of that comparison is always DOWN, and the agent answers a bearish read by
+ * buying the bullish side. Every losing trade on record was that mistake.
  */
-function edges(c: Ctx) {
+function edges(c: Ctx, floor = 0) {
+  const pUp = c.fair;
+  const pDown = 1 - c.fair;
   return {
-    up: c.priceUp == null ? -Infinity : c.fair - c.priceUp,
-    down: c.priceDown == null ? -Infinity : 1 - c.fair - c.priceDown,
+    up: c.priceUp == null || pUp < floor ? -Infinity : pUp - c.priceUp,
+    down: c.priceDown == null || pDown < floor ? -Infinity : pDown - c.priceDown,
   };
 }
 
-/** Pick whichever tradeable side carries more edge, if either clears the bar. */
-function best(c: Ctx, bar: number, reason: (d: Direction, e: number) => string): Decision {
-  const e = edges(c);
+/**
+ * Pick whichever tradeable side carries more edge, if either clears the bar.
+ *
+ * `floor` is passed through to `edges` — see the note there. Standing down is
+ * a valid answer: a strategy with a bearish read and no reachable DOWN should
+ * take nothing, not take UP.
+ */
+function best(
+  c: Ctx,
+  bar: number,
+  reason: (d: Direction, e: number) => string,
+  floor = 0,
+): Decision {
+  const e = edges(c, floor);
   const dir: Direction = e.up >= e.down ? "UP" : "DOWN";
   const edge = Math.max(e.up, e.down);
   if (!Number.isFinite(edge) || edge < bar) return null;
@@ -104,6 +131,15 @@ function best(c: Ctx, bar: number, reason: (d: Direction, e: number) => string):
   if (price == null) return null;
   return { direction: dir, price, contracts: conviction(edge), reason: reason(dir, edge) };
 }
+
+/**
+ * The model probability below which no strategy will buy a side.
+ *
+ * Not a view about odds — a view about this model. Below roughly a third, the
+ * fair value is mostly the volatility estimate rather than the distance to the
+ * strike, and that estimate is the least reliable input we have.
+ */
+const TAIL_FLOOR = 0.3;
 
 export const AGENTS: Agent[] = [
   {
@@ -126,6 +162,10 @@ export const AGENTS: Agent[] = [
           } the strike — the model says ${pctS(c.fair)} UP but ${d} is only ${pctS(
             (d === "UP" ? c.priceUp : c.priceDown) ?? 0,
           )}. Taking ${d} on ${pctS(e)} of edge.`,
+        // "Books are slow to price certainty" means backing the outcome the
+        // model calls certain. Buying the other side because it is cheap is the
+        // opposite of this thesis, and it is what lost money.
+        0.5,
       );
     },
   },
@@ -145,8 +185,11 @@ export const AGENTS: Agent[] = [
       const projected = c.spot * (1 + d30 * (c.tau / 30));
       const tilt = projected >= c.strike ? 0.08 : -0.08;
       const tilted = Math.min(0.97, Math.max(0.03, c.fair + tilt));
-      const eUp = c.priceUp == null ? -Infinity : tilted - c.priceUp;
-      const eDown = c.priceDown == null ? -Infinity : 1 - tilted - c.priceDown;
+      // Same floor as everywhere else: momentum is a reason to prefer a side,
+      // never a reason to buy one the model still expects to lose.
+      const eUp = c.priceUp == null || tilted < TAIL_FLOOR ? -Infinity : tilted - c.priceUp;
+      const eDown =
+        c.priceDown == null || 1 - tilted < TAIL_FLOOR ? -Infinity : 1 - tilted - c.priceDown;
       const dir: Direction = eUp >= eDown ? "UP" : "DOWN";
       const edge = Math.max(eUp, eDown);
       if (!Number.isFinite(edge) || edge < 0.08) return null;
@@ -189,6 +232,7 @@ export const AGENTS: Agent[] = [
           )}s to run, but realised vol only supports ${pctS(
             c.fair,
           )}. Fading the overshoot with ${d} at ${pctS(e)} edge.`,
+        TAIL_FLOOR,
       );
     },
   },
@@ -218,7 +262,12 @@ export const AGENTS: Agent[] = [
       const thin: Direction = crowded === "UP" ? "DOWN" : "UP";
       const price = thin === "UP" ? c.priceUp : c.priceDown;
       if (price == null) return null; // the thin side has nothing to cross
-      const edge = thin === "UP" ? c.fair - price : 1 - c.fair - price;
+      // A crowded book is a reason to doubt the price, not a reason to buy a
+      // side the model puts in the tail. The thin side has to be worth owning
+      // on its own merits too.
+      const pThin = thin === "UP" ? c.fair : 1 - c.fair;
+      if (pThin < TAIL_FLOOR) return null;
+      const edge = pThin - price;
       if (edge < 0.05) return null;
       return {
         direction: thin,

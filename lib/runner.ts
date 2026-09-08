@@ -233,8 +233,13 @@ class Runner {
       // side's own units, and is null when nothing is resting there. A side
       // with nothing to cross is not tradeable and must not be given a price —
       // pricing DOWN off the UP bids produced orders that could never fill.
+      //
+      // The buffer is included in the price the strategies see, because it is
+      // part of what they pay. Deciding on the quote and paying quote + 2c made
+      // every threshold in agents.ts a fiction, and the gap is worst exactly
+      // where it hurts most: on a 5c contract 2c is 40% of the premium.
       const clamp = (p: number) => Math.min(0.98, Math.max(0.02, p));
-      const priceUp = bestYesAsk == null ? null : clamp(bestYesAsk);
+      const priceUp = bestYesAsk == null ? null : clamp(bestYesAsk + CROSSING_BUFFER);
 
       // DOWN has two routes. Directly, by crossing a resting SELL_NO — which
       // almost never exists here. Or synthetically, by minting a complete set
@@ -242,8 +247,11 @@ class Runner {
       // costs `1 - bestBid`. Take whichever is cheaper; the synthetic route is
       // usually the only one available at all.
       const bestYesBid = book.yesBids[0]?.price ?? null;
-      const mintCost = bestYesBid == null ? null : 1 - bestYesBid;
-      const downDirect = bestNoAsk == null ? null : clamp(bestNoAsk);
+      // The YES leg is sold a buffer below the bid to clear, so the set costs
+      // that much more than `1 - bid`. Priced the same way as UP: what the
+      // agent actually pays, not what the screen says.
+      const mintCost = bestYesBid == null ? null : 1 - (bestYesBid - CROSSING_BUFFER);
+      const downDirect = bestNoAsk == null ? null : clamp(bestNoAsk + CROSSING_BUFFER);
       const downMint = mintCost == null ? null : clamp(mintCost);
       const priceDown =
         downDirect == null ? downMint : downMint == null ? downDirect : Math.min(downDirect, downMint);
@@ -336,7 +344,9 @@ class Runner {
     // Do not assume unlimited depth: crossing UP consumes asks, DOWN crosses
     // resting bids. Size is the smallest of appetite, book, and wallet.
     const available = decision.direction === "UP" ? ctx.depthUp : ctx.depthDown;
-    const limitPrice = Math.min(0.98, decision.price + CROSSING_BUFFER);
+    // `decision.price` already carries the crossing buffer — see the note where
+    // the book is priced. Adding it again here paid it twice.
+    const limitPrice = decision.price;
 
     // The wallet and the risk profile set the budget; `decision.contracts` is a
     // conviction FRACTION of it, so a strong read stakes the full slice and a
@@ -352,8 +362,8 @@ class Runner {
     const key = openKey(funded.sealedKey);
     if (!key) return this.skip("key-unreadable"); // rotated secret — owner re-deploys
 
-    // Pay up to the buffer past the quote so the order actually crosses.
-    const limit = Math.min(0.98, decision.price + CROSSING_BUFFER);
+    // Already buffered past the quote, so this crosses without paying twice.
+    const limit = limitPrice;
 
     const useMint = decision.direction === "DOWN" && downViaMint && bestYesBid != null;
     const res = useMint
