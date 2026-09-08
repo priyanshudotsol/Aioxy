@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { store } from "@/lib/store";
 import { AGENTS } from "@/lib/agents";
+import { ensureRunnerAlive } from "@/lib/heartbeat";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,10 @@ export const dynamic = "force-dynamic";
  * included. A person's standing is the sum of every agent they run, so one
  * good agent does not hide a bad one.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  // A visit to the board is also a heartbeat — see the note in /api/fleet.
+  after(() => ensureRunnerAlive(new URL(req.url).origin));
+
   const [raw, names] = await Promise.all([store.leaderboard(100), store.profiles()]);
 
   const rows = raw.map((r) => {

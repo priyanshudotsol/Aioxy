@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createPublicClient, http, formatUnits, isAddress, parseAbi, type Address } from "viem";
 import { somniaTestnet } from "viem/chains";
 import { SOMNIA_TESTNET_ADDRESSES } from "@somnia-chain/markets-sdk";
@@ -6,6 +6,7 @@ import { store } from "@/lib/store";
 import { AGENTS } from "@/lib/agents";
 import { RISK } from "@/lib/agenttrader";
 import { RPC_URL } from "@/lib/config";
+import { ensureRunnerAlive } from "@/lib/heartbeat";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,12 @@ export async function GET(req: NextRequest) {
   if (!owner || !isAddress(owner)) {
     return NextResponse.json({ error: "owner required" }, { status: 400 });
   }
+
+  // The heartbeat. Hobby cron fires once a day, which cannot keep a runner
+  // alive across a deploy — so the dashboard's own polling revives it. Inside
+  // `after()`, and throttled and lease-guarded inside the helper, so a reader
+  // waiting on their agents never waits on this.
+  after(() => ensureRunnerAlive(req.nextUrl.origin));
 
   const pub = createPublicClient({ chain: somniaTestnet, transport: http(RPC_URL) });
   const now = Math.floor(Date.now() / 1000);

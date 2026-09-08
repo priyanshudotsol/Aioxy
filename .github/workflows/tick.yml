@@ -1,0 +1,52 @@
+# Keeps the trading runner alive.
+#
+# Vercel's Hobby plan allows a cron to fire at most once a day, so vercel.json's
+# schedule cannot be the heartbeat: any deploy kills the running functions and
+# with them the tick chain, and nothing restarts it until 00:00 UTC. That is a
+# 24-hour hole in a bot that is supposed to trade continuously.
+#
+# So the heartbeat lives here instead. Each run pokes /api/tick, which claims the
+# lease and then ticks in a self-chaining loop for as long as it survives. A poke
+# that lands while a chain is already running is a no-op — the lease holder keeps
+# it and the endpoint answers "another invocation holds the tick lease" — so this
+# is a watchdog, not a second driver.
+name: tick
+
+on:
+  schedule:
+    # Every five minutes: GitHub's shortest useful interval, and short enough
+    # that a chain broken by a deploy restarts within one window.
+    - cron: "*/5 * * * *"
+  # So a deploy can be followed by an immediate kick instead of a wait.
+  workflow_dispatch:
+
+# A slow tick must not stack runs on top of each other.
+concurrency:
+  group: tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Poke the runner
+        env:
+          BASE: ${{ vars.AIOXY_URL || 'https://aioxy.vercel.app' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::notice::CRON_SECRET is not set on this repository, so the"
+            echo "::notice::watchdog is idle. The app still revives its own"
+            echo "::notice::runner on visitor traffic; this job only covers the"
+            echo "::notice::hours when nobody opens it. Add the secret to arm it."
+            exit 0
+          fi
+          code=$(curl -sS --max-time 30 -o /tmp/tick.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/tick")
+          echo "HTTP $code"
+          cat /tmp/tick.json; echo
+          # Anything but 200 means the runner is not being driven, and a silent
+          # green tick here would hide exactly the outage this job exists to
+          # prevent.
+          [ "$code" = "200" ]
