@@ -164,3 +164,49 @@ export async function sweepHome(key: Hex, owner: Address, amount?: number): Prom
 
 const msg = (e: unknown) =>
   String(e instanceof Error ? (e as { shortMessage?: string }).shortMessage ?? e.message : e).slice(0, 200);
+
+/**
+ * Redeem one outcome leg into the agent's own wallet, leaving it there.
+ *
+ * `redeemAndSweep` is the settlement path and sends the proceeds home. Recovery
+ * needs the other half of that: put the collateral back where it came from, so
+ * the caller can decide what happens next.
+ */
+export async function redeemOutcome(
+  key: Hex,
+  outcomeId: bigint,
+  contracts: number,
+): Promise<{ redeemed: number; txHash?: string; error?: string }> {
+  const account = privateKeyToAccount(key);
+  const client = pub();
+  const wallet = walletFor(key);
+  const balanceOf = () =>
+    client.readContract({ address: USDC, abi: erc20, functionName: "balanceOf", args: [account.address] });
+
+  try {
+    const before = await balanceOf();
+    const singleton = (await client.readContract({
+      address: SETTLEMENT, abi: parseAbi(["function outcomeToken() view returns (address)"]),
+      functionName: "outcomeToken",
+    })) as Address;
+    const isOp = await client.readContract({
+      address: singleton, abi: erc6909Abi, functionName: "isOperator", args: [account.address, SETTLEMENT],
+    });
+    if (!isOp) {
+      const approve = await wallet.writeContract({
+        address: singleton, abi: erc6909Abi, functionName: "setOperator", args: [SETTLEMENT, true],
+      });
+      await client.waitForTransactionReceipt({ hash: approve });
+    }
+    const hash = await wallet.writeContract({
+      address: SETTLEMENT, abi: binarySettlementAbi, functionName: "redeem",
+      args: [outcomeId, BigInt(Math.round(contracts * 1e6)), account.address],
+    });
+    const rcpt = await client.waitForTransactionReceipt({ hash });
+    if (rcpt.status !== "success") return { redeemed: 0, txHash: hash, error: "redeem reverted" };
+    const released = (await balanceOf()) - before;
+    return { redeemed: Number(released) / 1e6, txHash: hash };
+  } catch (e) {
+    return { redeemed: 0, error: `redeem failed: ${msg(e)}` };
+  }
+}

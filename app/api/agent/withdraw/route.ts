@@ -4,7 +4,7 @@ import { store } from "@/lib/store";
 import { openKey } from "@/lib/vault";
 import { sweepHome } from "@/lib/settle";
 import { burnCompleteSets } from "@/lib/agenttrader";
-import { liveRounds } from "@/lib/indexer";
+import { liveRounds, settledRounds } from "@/lib/indexer";
 import { internalAuthorized } from "@/lib/internal";
 import { withdrawMessage } from "@/lib/agentkey";
 
@@ -61,8 +61,18 @@ export async function POST(req: NextRequest) {
   // collateral in the wrong form and invisible to a tUSDC sweep. Turn it back
   // into collateral first, or "withdraw all" quietly returns nothing while the
   // wallet still holds the money.
-  const live = await liveRounds(24).catch(() => []);
-  const recovered = await burnCompleteSets(key, live);
+  // Both halves matter. A set on a round that is still open is burned; one on a
+  // round that has already resolved has to be redeemed instead, and that is
+  // where stranded collateral tends to be found, because it sits unnoticed
+  // until the round ends.
+  const [live, done] = await Promise.all([
+    liveRounds(24).catch(() => []),
+    settledRounds(40).catch(() => []),
+  ]);
+  const recovered = await burnCompleteSets(key, [
+    ...live,
+    ...done.map((m) => ({ ...m, finalized: true })),
+  ]);
 
   const res = await sweepHome(key, owner as Address, amount);
   return NextResponse.json({ ...res, recovered, agent: agent.address, owner });

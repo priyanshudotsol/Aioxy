@@ -5,7 +5,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { SOMNIA_TESTNET_ADDRESSES, binaryPoolWriteAbi, erc6909Abi, ORDER_KIND } from "@somnia-chain/markets-sdk";
 import { outcomeIds } from "./indexer";
 import type { Direction } from "./store";
-import { PROB_SCALE, QTY_SCALE, RPC_URL } from "./config";
+import { PROB_SCALE, QTY_SCALE, RPC_URL, UP, DOWN } from "./config";
+import { redeemOutcome } from "./settle";
 
 /**
  * An agent trading its OWN wallet.
@@ -269,23 +270,34 @@ const msg = (e: unknown) =>
   String(e instanceof Error ? (e as { shortMessage?: string }).shortMessage ?? e.message : e).slice(0, 200);
 
 /**
- * Burn any complete sets an agent is sitting on, back into collateral.
+ * Recover collateral an agent is sitting on that no trade record knows about.
  *
  * A complete set is one YES and one NO of the same market. It is worth exactly
- * 1.00 at settlement whichever way the round goes, so holding one is not a
- * position — it is collateral that has been parked in the wrong form.
+ * 1.00 whichever way the round goes, so holding one is not a position — it is
+ * collateral parked in the wrong form.
  *
  * Agents end up holding them because the synthetic DOWN route mints a set and
  * then sells the YES leg, and the second half can fail after the first half has
- * already spent the money. When that happened there was nothing to notice it:
- * the trade was never recorded, so nothing settled it and nothing swept it, and
- * the wallet just read as empty. `burnSet` undoes the mint while the market is
- * still open, which is better than waiting for a resolution that roughly 40% of
- * rounds on this venue never get.
+ * already spent the money. Nothing noticed: the trade never filled so it was
+ * never recorded, and settlement and sweeps only ever look at recorded trades.
+ *
+ * Two ways back, and which one applies depends on the round:
+ *
+ *   still trading — `burnSet` undoes the mint directly. Preferred, because it
+ *     does not depend on a resolution that roughly 40% of rounds never get.
+ *   already finalized — burning is no longer available, so the winning leg is
+ *     redeemed instead. The set holds both legs, so the payout is the same.
  */
 export async function burnCompleteSets(
   key: Hex,
-  markets: { marketId: string; binaryPoolAddress: string; yesTokenId?: string; noTokenId?: string }[],
+  markets: {
+    marketId: string;
+    binaryPoolAddress: string;
+    yesTokenId?: string;
+    noTokenId?: string;
+    finalized?: boolean;
+    winningOutcome?: number | null;
+  }[],
 ): Promise<{ burned: number; txs: string[]; errors: string[] }> {
   const account = privateKeyToAccount(key);
   const wallet = createWalletClient({ account, chain: somniaTestnet, transport: http(RPC_URL) });
@@ -322,6 +334,22 @@ export async function burnCompleteSets(
     // must be left alone — burning is not allowed to close someone's trade.
     const qty = (yes as bigint) < (no as bigint) ? (yes as bigint) : (no as bigint);
     if (qty <= 0n) continue;
+
+    // A finalized round cannot be un-minted, so the winning leg is redeemed.
+    if (m.finalized) {
+      const winner = m.winningOutcome === UP ? ids.yes : m.winningOutcome === DOWN ? ids.no : null;
+      if (winner == null) {
+        out.errors.push(`${m.marketId}: finalized without a winning outcome`);
+        continue;
+      }
+      const res = await redeemOutcome(key, BigInt(winner), Number(qty) / QTY_SCALE);
+      if (res.error) out.errors.push(`${m.marketId}: ${res.error}`);
+      else {
+        out.burned += res.redeemed;
+        if (res.txHash) out.txs.push(res.txHash);
+      }
+      continue;
+    }
 
     try {
       const hash = await wallet.writeContract({
