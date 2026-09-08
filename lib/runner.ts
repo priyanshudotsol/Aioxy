@@ -8,20 +8,10 @@ import { agentTake, agentTakeDownViaMint, agentBalance, sizeFor, RISK, type Risk
 import { redeemAndSweep } from "./settle";
 import { outcomeIds } from "./indexer";
 import { toFeedPrice, toStrike } from "./fmt";
-import { UP, canTrade } from "./config";
+import { UP, canTrade, TICK_MS, CROSSING_BUFFER } from "./config";
 
-const TICK_MS = 3000;
 
-/**
- * How far past the observed price a taker will pay to actually cross.
- *
- * The book we price against comes from the indexer, which lags the chain. An IOC
- * sent at exactly the level we read reverts `ImmediateOrCancelNoFill()` the
- * moment that level moves — which was every trade the runner attempted until
- * this existed. Two points is enough to cross a level that has ticked, and small
- * enough that it cannot turn a good decision into a bad fill.
- */
-const CROSSING_BUFFER = 0.02;
+
 
 export type RunnerStatus = {
   running: boolean;

@@ -21,3 +21,24 @@ Read in this order.
    the ERC20Vault address *is* the pool address — so if both the grant and the
    collateral are per-pool, "deploy once, runs forever" is impossible and the
    product needs reframing. Resolve before building UI.
+
+## Deploying
+
+```bash
+cp .env.production.example .env.production   # then fill in the three required keys
+docker compose up -d --build
+curl localhost:4311/api/health
+```
+
+Docker is the right shape for this product, and serverless is not:
+
+- The store is **SQLite on a mounted volume** (`aioxy-data:/data`). Agent keys and
+  the trade record outlive the container. On serverless the filesystem is
+  ephemeral and both would vanish between requests.
+- The runner is a **long-lived interval** started by `instrumentation.ts`. A
+  serverless function does not stay alive to tick it, so agents would silently
+  stop trading while the site kept serving pages.
+
+`/api/health` returns 503 unless the database answers **and** the runner has
+ticked within the last minute — so a container whose agents have stopped fails
+its healthcheck instead of looking fine.

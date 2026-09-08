@@ -2,7 +2,7 @@
 
 import { createWalletClient, custom, type Address, type EIP1193Provider } from "viem";
 import { somniaTestnet } from "viem/chains";
-import { CHAIN_ID } from "./config";
+import { CHAIN_ID, RPC_URL, EXPLORER } from "./config";
 
 /** EIP-6963 announced provider. */
 export type Injected = { info: { rdns: string; name: string; icon: string }; provider: EIP1193Provider };
@@ -53,8 +53,8 @@ export async function ensureChain(provider: EIP1193Provider) {
           chainId: CHAIN_HEX,
           chainName: "Somnia Shannon Testnet",
           nativeCurrency: { name: "Somnia Test Token", symbol: "STT", decimals: 18 },
-          rpcUrls: ["https://dream-rpc.somnia.network"],
-          blockExplorerUrls: ["https://shannon-explorer.somnia.network"],
+          rpcUrls: [RPC_URL],
+          blockExplorerUrls: [EXPLORER],
         },
       ],
     } as never);

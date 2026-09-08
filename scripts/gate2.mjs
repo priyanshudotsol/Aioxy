@@ -28,7 +28,7 @@ const SECRET = process.env.INTERNAL_SECRET || "";
 const internal = { "content-type": "application/json", "x-internal-secret": SECRET };
 const RPC = process.env.RPC_URL || "https://dream-rpc.somnia.network";
 const INDEXER = process.env.INDEXER_URL || "https://dev.smk.somnia.host/v1/graphql";
-const EXPLORER = "https://shannon-explorer.somnia.network";
+const EXPLORER = process.env.EXPLORER_URL || "https://shannon-explorer.somnia.network";
 
 const c = (n, s) => `\x1b[${n}m${s}\x1b[0m`;
 const ok = (s) => c(32, s), bad = (s) => c(31, s), warnc = (s) => c(33, s), dim = (s) => c(90, s);

@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.data
+certificates
+*.log
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+Dockerfile
+docker-compose.yml
+.dockerignore
+docs
+README.md

@@ -7,7 +7,7 @@ import { store } from "@/lib/store";
 import { sealKey } from "@/lib/vault";
 import { agentKeyMessage, agentKeyFromSignature, agentAddressFromKey } from "@/lib/agentkey";
 import { AGENTS } from "@/lib/agents";
-import { RPC_URL } from "@/lib/config";
+import { RPC_URL, AGENT_GAS_TOPUP_WEI, AGENT_GAS_MIN_WEI, HOUSE_GAS_FLOOR_WEI } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -151,9 +151,6 @@ export async function POST(req: NextRequest) {
   });
 }
 
-/** Below this the house stops giving gas away, so it can always pay its own. */
-const HOUSE_GAS_FLOOR = 5n * 10n ** 18n; // 5 STT
-
 /**
  * Send the agent a little STT so it can pay for its own orders. Best-effort —
  * a failure here is not fatal, the agent simply cannot trade until funded.
@@ -169,11 +166,11 @@ async function topUpGas(address: Address): Promise<{ sent: boolean; note: string
   try {
     const c = pub();
     const have = await c.getBalance({ address });
-    if (have >= 10n ** 17n) return { sent: false, note: "already has gas" };
+    if (have >= AGENT_GAS_MIN_WEI) return { sent: false, note: "already has gas" };
 
     const houseAddress = privateKeyToAccount(pk).address;
     const houseBalance = await c.getBalance({ address: houseAddress });
-    if (houseBalance < HOUSE_GAS_FLOOR) {
+    if (houseBalance < HOUSE_GAS_FLOOR_WEI) {
       return { sent: false, note: "house gas reserve is low — fund the agent's gas manually" };
     }
 
@@ -181,7 +178,7 @@ async function topUpGas(address: Address): Promise<{ sent: boolean; note: string
     const house = createWalletClient({
       account: privateKeyToAccount(pk), chain: somniaTestnet, transport: http(RPC_URL),
     });
-    const hash = await house.sendTransaction({ to: address, value: 2n * 10n ** 17n });
+    const hash = await house.sendTransaction({ to: address, value: AGENT_GAS_TOPUP_WEI });
     await c.waitForTransactionReceipt({ hash });
     return { sent: true, note: hash };
   } catch (e) {

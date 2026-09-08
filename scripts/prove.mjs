@@ -41,7 +41,7 @@ for (const f of [".env.local", ".env"]) {
 const INDEXER = process.env.INDEXER_URL || "https://dev.smk.somnia.host/v1/graphql";
 const RPC = process.env.RPC_URL || "https://dream-rpc.somnia.network";
 const WS = process.env.WS_RPC_URL || "wss://api.infra.testnet.somnia.network/ws";
-const EXPLORER = "https://shannon-explorer.somnia.network";
+const EXPLORER = process.env.EXPLORER_URL || "https://shannon-explorer.somnia.network";
 
 /** placeBinaryOrderFor — verified against binaryPoolWriteAbi, see RESEARCH.md §2. */
 const PLACE_BINARY_ORDER_FOR = "0x5d97c566";

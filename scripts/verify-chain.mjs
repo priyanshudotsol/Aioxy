@@ -26,7 +26,7 @@ for (const f of [".env.local", ".env"]) {
 }
 
 const RPC = process.env.RPC_URL || "https://dream-rpc.somnia.network";
-const EXPLORER = "https://shannon-explorer.somnia.network";
+const EXPLORER = process.env.EXPLORER_URL || "https://shannon-explorer.somnia.network";
 const c = (n, s) => `\x1b[${n}m${s}\x1b[0m`;
 const ok = (s) => c(32, s), bad = (s) => c(31, s), dim = (s) => c(90, s), bold = (s) => c(1, s);
 

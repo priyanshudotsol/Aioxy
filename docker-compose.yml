@@ -1,0 +1,32 @@
+services:
+  aioxy:
+    build:
+      context: .
+      args:
+        NODE_VERSION: 24-alpine
+    image: aioxy:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4311}:4311"
+    # Secrets and endpoints come from the environment, never the image.
+    env_file:
+      - .env.production
+    environment:
+      # The database lives on the volume below, not in the container layer.
+      DATABASE_PATH: /data/aioxy.db
+    volumes:
+      - aioxy-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4311/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  # Named volume: agent keys and the trade record must outlive the container.
+  aioxy-data:

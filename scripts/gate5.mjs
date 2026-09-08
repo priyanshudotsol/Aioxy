@@ -32,7 +32,7 @@ for (const f of [".env.local", ".env"]) {
 const BASE = process.env.BASE_URL || "http://localhost:4311";
 const SECRET = process.env.INTERNAL_SECRET || "";
 const RPC = process.env.RPC_URL || "https://dream-rpc.somnia.network";
-const EXPLORER = "https://shannon-explorer.somnia.network";
+const EXPLORER = process.env.EXPLORER_URL || "https://shannon-explorer.somnia.network";
 const c = (n, s) => `\x1b[${n}m${s}\x1b[0m`;
 const ok = (s) => c(32, s), bad = (s) => c(31, s), warn = (s) => c(33, s), dim = (s) => c(90, s);
 let failures = 0;
