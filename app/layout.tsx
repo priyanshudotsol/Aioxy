@@ -32,6 +32,14 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+      <head>
+        {/* Scroll-reveal elements ship displaced and are settled by an observer.
+            Without JavaScript that observer never runs, so the page would be
+            blank below the fold — this puts everything back. */}
+        <noscript>
+          <style>{`[data-reveal]{opacity:1!important;transform:none!important}`}</style>
+        </noscript>
+      </head>
       <body>
         <ToastProvider>
           <WalletProvider>

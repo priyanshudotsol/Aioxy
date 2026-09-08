@@ -15,11 +15,15 @@ import { connect as connectWallet, discoverWallets, walletClientFor, type Inject
 
 type WalletState = {
   wallets: Injected[];
+  /** False until EIP-6963 discovery has finished. An empty `wallets` before
+   *  this is "we have not looked yet", not "there is nothing installed". */
+  discovered: boolean;
   provider: EIP1193Provider | null;
   account: Address | null;
   connecting: boolean;
   error: string | null;
-  connect: (w: Injected) => Promise<void>;
+  /** `next` overrides where to land once connected. */
+  connect: (w: Injected, next?: string) => Promise<void>;
   disconnect: () => void;
   walletClient: () => ReturnType<typeof walletClientFor> | null;
 };
@@ -34,6 +38,7 @@ const STORAGE_KEY = "aioxy:wallet";
  */
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [wallets, setWallets] = useState<Injected[]>([]);
+  const [discovered, setDiscovered] = useState(false);
   const [provider, setProvider] = useState<EIP1193Provider | null>(null);
   const [account, setAccount] = useState<Address | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -47,6 +52,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     discoverWallets().then((found) => {
       if (!alive) return;
       setWallets(found);
+      setDiscovered(true);
       // Reconnect silently if this browser already authorised a wallet.
       const last = (() => {
         try {
@@ -88,7 +94,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return () => p.removeListener?.("accountsChanged", onAccounts);
   }, [provider]);
 
-  const connect = useCallback(async (w: Injected) => {
+  const connect = useCallback(async (w: Injected, next?: string) => {
     setConnecting(true);
     setError(null);
     try {
@@ -101,13 +107,19 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         /* private mode — connection still works for this session */
       }
 
-      // Connecting from the marketing page means the reader is done reading, so
-      // send them to their dashboard. Deliberately not from /deploy: connecting
-      // is step 1 of that flow and steps 2 and 3 follow on the same page, so a
-      // redirect there would bounce the reader out of the funnel they are in.
-      // The silent reconnect above never reaches here, so a returning visitor
-      // can still open the landing page and read it.
-      if (pathname === "/") router.push("/fleet");
+      // Where to land. `next` is set by whatever asked for the connection — the
+      // deploy wall and the landing's deploy button both pass "/deploy", so a
+      // reader who pressed "deploy" is not dropped on the dashboard instead.
+      // Otherwise, connecting from the marketing page means the reader is done
+      // reading, so send them to their fleet. Never a redirect from inside
+      // /deploy itself: connecting is step 1 there and steps 2 and 3 follow on
+      // the same page. The silent reconnect above never reaches here, so a
+      // returning visitor can still open the landing page and read it.
+      if (next) {
+        if (next !== pathname) router.push(next);
+      } else if (pathname === "/") {
+        router.push("/fleet");
+      }
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       setError(/user rejected|denied/i.test(m) ? "Connection rejected." : m.slice(0, 160));
@@ -132,8 +144,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ wallets, provider, account, connecting, error, connect, disconnect, walletClient }),
-    [wallets, provider, account, connecting, error, connect, disconnect, walletClient],
+    () => ({ wallets, discovered, provider, account, connecting, error, connect, disconnect, walletClient }),
+    [wallets, discovered, provider, account, connecting, error, connect, disconnect, walletClient],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

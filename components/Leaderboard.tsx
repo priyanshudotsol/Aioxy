@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet } from "./WalletProvider";
 import { EXPLORER } from "@/lib/config";
@@ -71,8 +72,17 @@ export default function Leaderboard() {
   const mine = account?.toLowerCase();
   const t = data?.totals;
 
+  // Three states, not one. `data === null` is "still loading" and must not be
+  // reported as an empty board; a board with rows that the filter hides is a
+  // different message again, and one the reader can act on.
+  const loading = data === null;
+  const noTraders = !loading && (data?.rows.length ?? 0) === 0;
+  const filteredOut = !loading && !noTraders && rows.length === 0;
+
   return (
-    <div className="max-w-[1240px] px-8 pb-24 pt-8">
+    // `mx-auto` — without it the whole page hangs off the left edge while the
+    // floating nav stays centred.
+    <div className="mx-auto max-w-[1240px] px-6 pb-24 pt-10 sm:px-8">
       <header className="flex flex-wrap items-end justify-between gap-4 pb-8">
         <div>
           <p className="label">Public leaderboard</p>
@@ -88,6 +98,9 @@ export default function Leaderboard() {
       </header>
 
       {/* ── controls ─────────────────────────────────────────────────────── */}
+      {/* Hidden while the board is empty: sort and filter chips above nothing
+          are furniture, and they made the empty page look broken. */}
+      {!loading && !noTraders && (
       <div className="flex flex-wrap items-center gap-3">
         <Segmented
           options={[["pnl", "P&L"], ["return", "Return"], ["trades", "Trades"]]}
@@ -100,6 +113,7 @@ export default function Leaderboard() {
           onChange={(v) => setActiveOnly(v === "active")}
         />
       </div>
+      )}
 
       {/* ── podium ───────────────────────────────────────────────────────── */}
       {podium.length > 0 && (
@@ -119,28 +133,92 @@ export default function Leaderboard() {
         </div>
       )}
 
-      {/* ── the rest ─────────────────────────────────────────────────────── */}
-      <section className="mt-14">
-        <div className="rule flex flex-wrap items-baseline justify-between gap-2 pt-5">
-          <h2 className="h-section">Standings</h2>
-          <span className="text-[12px]" style={{ color: "var(--faint)" }}>updates every 10s</span>
+      {/* ── empty and loading ────────────────────────────────────────────── */}
+      {loading && (
+        <div className="mt-10 grid min-h-[40svh] place-items-center">
+          <p className="label">Loading standings…</p>
         </div>
+      )}
 
-        {rest.length ? (
-          <div className="mt-6 border" style={{ borderColor: "var(--line-strong)", background: "var(--surface)" }}>
-            <Header />
-            {rest.map((r, i) => (
-              <TableRow key={r.owner} row={r} rank={i + 4} mine={mine === r.owner.toLowerCase()} />
-            ))}
-          </div>
-        ) : (
-          <div className="mt-6 grid place-items-center px-6 py-14 text-center" style={{ border: "1px dashed var(--line-strong)" }}>
-            <p className="text-[13.5px]" style={{ color: "var(--muted)" }}>
-              {podium.length ? "That is everyone so far." : "No traders yet. Deploy an agent to appear here."}
+      {noTraders && (
+        <div
+          className="mt-10 grid min-h-[46svh] place-items-center px-6 py-16 text-center"
+          style={{ border: "1px solid var(--line-strong)", background: "var(--surface)" }}
+        >
+          <div className="max-w-[48ch]">
+            <p className="label">Standings</p>
+            <h2 className="mt-4 text-[26px] font-bold tracking-[-.025em]" style={{ color: "var(--ink)" }}>
+              No agent has settled a trade yet.
+            </h2>
+            <p className="mt-4 text-[14px] leading-relaxed" style={{ color: "var(--muted)" }}>
+              This board is read from on-chain positions, so a trader appears the moment their
+              first one resolves — win or lose. Nothing is listed until then.
             </p>
+            <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+              {/* Only offered once there is a wallet: deploying needs a
+                  signature, so the link is a wall for anyone else. */}
+              {account && (
+                <Link
+                  href="/deploy"
+                  className="px-6 py-3.5 text-[14px] font-semibold transition-opacity hover:opacity-90"
+                  style={{ background: "var(--ink)", color: "#fff" }}
+                >
+                  Deploy an agent
+                </Link>
+              )}
+              <Link
+                href="/"
+                className="border px-6 py-3.5 text-[14px] font-medium transition-colors hover:bg-[var(--surface-2)]"
+                style={{ borderColor: "var(--line-strong)" }}
+              >
+                How Aioxy works
+              </Link>
+            </div>
           </div>
-        )}
-      </section>
+        </div>
+      )}
+
+      {/* ── the rest ─────────────────────────────────────────────────────── */}
+      {!loading && !noTraders && (
+        <section className="mt-14">
+          <div className="rule flex flex-wrap items-baseline justify-between gap-2 pt-5">
+            <h2 className="h-section">Standings</h2>
+            <span className="text-[12px]" style={{ color: "var(--faint)" }}>updates every 10s</span>
+          </div>
+
+          {rest.length ? (
+            <div className="mt-6 border" style={{ borderColor: "var(--line-strong)", background: "var(--surface)" }}>
+              <Header />
+              {rest.map((r, i) => (
+                <TableRow key={r.owner} row={r} rank={i + 4} mine={mine === r.owner.toLowerCase()} />
+              ))}
+            </div>
+          ) : (
+            <div
+              className="mt-6 grid place-items-center px-6 py-14 text-center"
+              style={{ border: "1px dashed var(--line-strong)" }}
+            >
+              <p className="text-[13.5px]" style={{ color: "var(--muted)" }}>
+                {filteredOut ? (
+                  <>
+                    Every trader here has closed their agents.{" "}
+                    <button
+                      onClick={() => setActiveOnly(false)}
+                      className="font-semibold underline underline-offset-2"
+                      style={{ color: "var(--ink)" }}
+                    >
+                      Include closed
+                    </button>{" "}
+                    to see them.
+                  </>
+                ) : (
+                  "That is everyone so far."
+                )}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import Leaderboard from "@/components/Leaderboard";
+import LeaderboardGate from "@/components/LeaderboardGate";
 
 export const metadata = { title: "Leaderboard — Aioxy" };
 
 export default function Page() {
-  return <Leaderboard />;
+  return <LeaderboardGate />;
 }

@@ -21,7 +21,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <>
         <TopBar />
-        {children}
+        {/* The bar floats over the page rather than pushing it down, so every
+            view except the landing — which paints its own ground up behind the
+            nav — has to reserve the height itself. */}
+        <div className={path === "/" ? undefined : "pt-[72px]"}>{children}</div>
       </>
     );
   }
