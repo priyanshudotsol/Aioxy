@@ -136,7 +136,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } catch {
       /* nothing to clear */
     }
-  }, []);
+    // Every route except the landing needs a wallet, so staying put after a
+    // disconnect just swaps the page for a connect wall — which reads as the
+    // app having thrown the reader out. Send them to the page that still has
+    // something to say to them.
+    router.push("/");
+  }, [router]);
 
   const walletClient = useCallback(
     () => (provider && account ? walletClientFor(provider, account) : null),
