@@ -3,19 +3,34 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 4311",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "next start -p 4311",
+    "lint": "eslint",
+    "doctor": "node scripts/doctor.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "prove": "node scripts/prove.mjs",
+    "gate1": "node scripts/gate1.mjs",
+    "gate2": "node scripts/gate2.mjs",
+    "verify": "node scripts/verify.mjs",
+    "gate3": "node scripts/gate3.mjs",
+    "gate4": "node scripts/gate4.mjs",
+    "verify:chain": "node scripts/verify-chain.mjs",
+    "gate5": "node scripts/gate5.mjs",
+    "gate7": "node scripts/gate7.mjs",
+    "dev:https": "next dev -p 4311 --experimental-https"
   },
   "dependencies": {
+    "@somnia-chain/markets-sdk": "^0.29.0",
     "next": "16.3.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "viem": "^2.56.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^26.4.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

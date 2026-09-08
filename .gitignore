@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local agent track record
+.data/
+
+# next dev --experimental-https
+certificates/

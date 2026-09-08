@@ -1,26 +1,166 @@
 @import "tailwindcss";
 
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Daylight surface for a trading product: paper-white ground, deep navy ink,
+   one blue accent. Numbers are always mono + tabular so digits never jitter
+   as a round ticks over.                                                     */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f6f8fc;
+  --bg-deep: #e9eef9;
+  --surface: #ffffff;
+  --surface-2: #f1f4fb;
+  --line: #dfe5f1;
+  --line-soft: #ebeff7;
+  --text: #101b3a;
+  --muted: #5a6685;
+  --faint: #8d99b5;
+  /* Near-black, for the few elements that carry the page's contrast. */
+  --ink: #070d1e;
+  --line-strong: #ccd6e8;
+  --up: #0e9b62;
+  --up-dim: #0e9b6218;
+  --down: #d92b4d;
+  --down-dim: #d92b4d18;
+  --brand: #1e4fd8;
+  --brand-dim: #1e4fd814;
+  --warn: #b06f06;
+  --shadow-pill: 0 1px 2px rgba(16, 27, 58, .04), 0 8px 24px -6px rgba(16, 27, 58, .12);
+  --shadow-card: 0 1px 2px rgba(16, 27, 58, .04), 0 1px 0 rgba(255, 255, 255, .6) inset;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+* { -webkit-tap-highlight-color: transparent; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  overscroll-behavior-y: none;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: var(--font-mono), ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Letterspaced small-caps label that sits under a big figure. */
+.label {
+  font-family: var(--font-mono), ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: var(--shadow-card);
+}
+
+.hairline { border-color: var(--line-soft); }
+
+/* Big UP / DOWN tap targets. Sized for a thumb, not a cursor. */
+.side-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  justify-content: center;
+  min-height: 88px;
+  border-radius: 0;
+  border: 1px solid transparent;
+  font-weight: 650;
+  transition: transform .12s ease, filter .12s ease, background .12s ease;
+  cursor: pointer;
+}
+.side-btn:active:not(:disabled) { transform: scale(.975); }
+.side-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.side-up   { background: var(--up-dim);   border-color: #0e9b6244; color: var(--up); }
+.side-down { background: var(--down-dim); border-color: #d92b4d44; color: var(--down); }
+.side-up:hover:not(:disabled)   { background: #0e9b6226; }
+.side-down:hover:not(:disabled) { background: #d92b4d26; }
+
+/* Countdown ring. Not `.ring` — that is a built-in Tailwind utility that
+   paints a 1px box-shadow, which shows up as a square around the dial. */
+.countdown-ring { transform: rotate(-90deg); }
+.countdown-ring circle { transition: stroke-dashoffset .95s linear, stroke .3s ease; }
+
+/* Depth bars behind order-book rows */
+.depth {
+  position: absolute;
+  inset: 0 auto 0 0;
+  opacity: .16;
+  border-radius: 0;
+}
+
+@keyframes pulse-dot { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+.live-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+@keyframes slide-in { from { opacity: 0; transform: translateY(-6px) } to { opacity: 1; transform: none } }
+.slide-in { animation: slide-in .3s ease both; }
+
+/* Hero entrance. Staggered by inline --d so the eye lands top-to-bottom. */
+@keyframes rise { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: none } }
+.rise { animation: rise .7s cubic-bezier(.2, .7, .3, 1) both; animation-delay: var(--d, 0ms); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rise, .live-dot, .slide-in { animation: none !important; }
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 0 }
+::-webkit-scrollbar-track { background: transparent }
+
+/* ── Square by default ─────────────────────────────────────────────────────
+   The product reads as an instrument panel, not a consumer app. Rounded
+   corners are overridden globally rather than class-by-class so a stray
+   `rounded-full` in a component cannot quietly reintroduce them. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+/* ── Type scale ────────────────────────────────────────────────────────────
+   With colour reserved for profit and loss, hierarchy has to come from size,
+   weight and space. Three levels, used consistently, so a heading never reads
+   like the paragraph beneath it. */
+.h-page {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -.025em;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.h-section {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.sub {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+/* A section opens with a rule so blocks read as separate without needing a box. */
+.rule {
+  border-top: 1px solid var(--line-strong);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
 }
