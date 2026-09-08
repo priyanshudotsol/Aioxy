@@ -4,8 +4,15 @@ const nextConfig: NextConfig = {
   /**
    * Bundles only the files the server actually needs, so the Docker image
    * carries a runtime instead of a whole node_modules. See Dockerfile.
+   *
+   * Off on Vercel, where it broke the deploy: `onBuildComplete` from Vercel's
+   * build adapter died on a missing `.next/next-server.js.nft.json`. A local
+   * standalone build does emit that file, so the conflict is with the adapter
+   * rather than with standalone alone — but Vercel traces and packages the
+   * server itself and has no use for `.next/standalone` either way. Standalone
+   * exists here only for the Docker image.
    */
-  output: "standalone",
+  output: process.env.VERCEL ? undefined : "standalone",
 
   /**
    * Keep the live database out of the build.
