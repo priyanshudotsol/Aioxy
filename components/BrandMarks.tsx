@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 /**
  * Aioxy's own mark, plus the official Somnia and DreamDEX marks taken from each
  * project's own site and reduced to path data. Every partner path uses
@@ -8,27 +10,28 @@
 type MarkProps = { className?: string; title?: string };
 
 /**
- * An arrow that reaches a boundary and stops at it: the agent acts right up to
- * the edge of your account and never crosses into it. Drawn as a filled tile so
- * it holds at 24px in a nav bar.
+ * The Aioxy mark.
+ *
+ * A raster export rather than path data, unlike the partner marks below: the
+ * glyph is a soft-gradient render with overlapping surfaces, and reducing it to
+ * SVG would either lose the shading or take more markup than the file itself.
+ * It carries its own colour, so nothing here tints it.
  */
 export function AioxyMark({ size = 26 }: { size?: number }) {
+  // The source glyph is wider than tall; the height follows from its own ratio
+  // so the mark never squashes at whatever size a caller asks for.
+  const w = Math.round(size * 1.12);
   return (
-    <span
-      className="grid shrink-0 place-items-center rounded-[8px]"
-      style={{ height: size, width: size, background: "var(--text)" }}
+    <Image
+      src="/aioxy-mark.png"
+      alt=""
+      width={w}
+      height={Math.round(w * 0.798)}
+      priority
+      className="shrink-0"
+      style={{ height: "auto", width: w }}
       aria-hidden
-    >
-      <svg width={size * 0.56} height={size * 0.56} viewBox="0 0 14 14" fill="none">
-        <path
-          d="M2 7h5.4M5.6 4.7 7.9 7l-2.3 2.3M11 3.4v7.2"
-          stroke="#fff"
-          strokeWidth="1.9"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
+    />
   );
 }
 
