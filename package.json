@@ -19,7 +19,8 @@
     "gate5": "node scripts/gate5.mjs",
     "gate7": "node scripts/gate7.mjs",
     "dev:https": "next dev -p 4311 --experimental-https",
-    "migrate:pg": "node scripts/migrate-to-postgres.mjs"
+    "migrate:pg": "node scripts/migrate-to-postgres.mjs",
+    "send": "node scripts/send-usdc.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
