@@ -115,4 +115,14 @@ async function createSchema() {
     )`;
   // Case-insensitive uniqueness, so two people cannot race for one name.
   await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_name ON profiles (LOWER(username))`;
+
+  // One row, held by whichever invocation is currently driving the tick loop.
+  // Serverless has no "is the runner already running?" question a process can
+  // answer for itself, so the answer lives in the database.
+  await s`
+    CREATE TABLE IF NOT EXISTS runner_lease (
+      id          TEXT PRIMARY KEY,
+      holder      TEXT NOT NULL,
+      "expiresAt" BIGINT NOT NULL
+    )`;
 }

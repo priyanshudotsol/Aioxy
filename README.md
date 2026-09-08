@@ -184,6 +184,38 @@ The one-position-per-agent-per-round rule is a `UNIQUE(agentId, marketId)` **ind
 database rejects a duplicate rather than the runner having to remember to check — which is
 also why it has to gain an `owner` column before agents can trade per-owner.
 
+### The clock on Vercel
+
+The runner's `setInterval` lives in the process, so it dies with a serverless
+invocation — `/api/tick` is the clock in a deployment. Vercel's Hobby plan allows a cron
+to fire **at most once a day**, and a `* * * * *` schedule fails the deploy outright, so
+the cron is a kick rather than a cadence:
+
+1. The daily cron `GET`s `/api/tick` with `Authorization: Bearer $CRON_SECRET`.
+2. That invocation claims the `runner_lease` row, answers immediately, and then ticks at
+   `TICK_MS` for `TICK_LOOP_BUDGET_MS` (240s, inside the 300s `maxDuration`) in `after()`.
+3. Before the budget runs out it calls `/api/tick` again, passing its lease token in
+   `x-runner-lease`. The successor inherits the lease and takes over.
+
+The lease is what keeps that chain single-threaded: a second kick — a manual poke, an
+overlapping cron — finds a live lease and returns without ticking. A chain that dies stops
+renewing, so the next daily cron reclaims the lease and restarts it.
+
+| Variable | Default | |
+|---|---|---|
+| `CRON_SECRET` | — | Required. Cron auth, and how a link authenticates to the next one. |
+| `TICK_MS` | `3000` | Seconds between ticks inside a loop. |
+| `TICK_LOOP_BUDGET_MS` | `240000` | How long one invocation ticks before handing off. |
+| `TICK_LEASE_TTL_MS` | budget + 120s | How long a lease survives without a renewal. |
+| `TICK_CHAIN` | prod only | `1` forces chaining on, `0` off (one loop, then stop). |
+| `TICK_SELF_URL` | request origin | Override when the deployment cannot reach itself by origin. |
+| `DISABLE_AGENTS` | — | `1` stops the chain at the end of the current loop. |
+
+`GET /api/tick?once=1` runs a single synchronous tick and reports it, touching no lease —
+that is the shape for an external per-minute scheduler (a GitHub Action, cron-job.org) if
+you would rather not chain. On Pro, a tighter `crons` schedule in `vercel.json` is allowed
+and the chain becomes a convenience rather than the mechanism.
+
 ## One implementation note worth flagging
 
 **The venue id is derived at runtime, never hardcoded.** The bot kit documents a testnet
