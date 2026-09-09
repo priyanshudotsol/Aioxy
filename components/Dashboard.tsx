@@ -18,7 +18,7 @@ type FleetAgent = {
 
 type Activity = {
   id: string; agentId: string; asset: string; intervalSec: number;
-  direction: "UP" | "DOWN"; price: number; contracts: number; reason: string;
+  direction: "UP" | "DOWN"; price: number; contracts: number; cost: number; reason: string;
   settled: boolean; awaiting: boolean; expiry: number; won: boolean | null; pnl: number | null; placedAt: number;
   txHash: string | null; redeemTx: string | null; sweepTx: string | null;
 };
@@ -357,17 +357,34 @@ export default function Dashboard() {
                   <span className="mono text-[11.5px]" style={{ color: "var(--muted)" }}>
                     {a.contracts} @ {pct(a.price, 0)}
                   </span>
+                  {/*
+                    Stake and result are different quantities, and on a LOSS they
+                    are the same number — which is what made an unlabelled pair
+                    unreadable: the loss row looked like one figure repeated, so
+                    the win row's second figure looked like it contradicted the
+                    first. Both carry a word now, and the settled row spells out
+                    stake -> returned so the P&L is visibly the difference.
+                  */}
                   <span className="mono text-[11.5px]" style={{ color: SPENT }}>
-                    −${(a.contracts * a.price).toFixed(2)}
+                    staked ${a.cost.toFixed(2)}
                   </span>
+                  {a.settled ? (
+                    <span className="mono text-[11.5px]" style={{ color: "var(--muted)" }}>
+                      → back ${(a.cost + (a.pnl ?? 0)).toFixed(2)}
+                    </span>
+                  ) : null}
                   <span className="ml-auto flex items-center gap-2">
                     <span className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--faint)" }}>
                       <span className="h-1.5 w-1.5 shrink-0" style={{ background: deskColor(a.agentId) }} />
                       {a.agentId}
                     </span>
                     {a.settled ? (
-                      <span className="mono text-[12.5px] font-semibold" style={{ color: pnlColor(a.pnl ?? 0) }}>
-                        {money(a.pnl ?? 0)}
+                      <span
+                        className="mono text-[12.5px] font-semibold"
+                        style={{ color: pnlColor(a.pnl ?? 0) }}
+                        title={`Staked $${a.cost.toFixed(2)}, got back $${(a.cost + (a.pnl ?? 0)).toFixed(2)}`}
+                      >
+                        {money(a.pnl ?? 0)} net
                       </span>
                     ) : a.awaiting ? (
                       <span

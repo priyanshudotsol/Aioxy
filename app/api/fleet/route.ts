@@ -106,6 +106,11 @@ export async function GET(req: NextRequest) {
       direction: t.direction,
       price: t.price,
       contracts: t.contracts,
+      // The stake as it was actually booked. The UI used to recompute this as
+      // contracts x price, which is the same number today but is a second
+      // source of truth for the figure `pnl` is measured against — so a change
+      // to how a fill is priced would silently desynchronise the two.
+      cost: t.cost,
       reason: t.reason,
       settled: t.settled,
       awaiting: isAwaiting(t),
