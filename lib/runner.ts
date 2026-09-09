@@ -203,7 +203,9 @@ class Runner {
       if (strike == null || strike <= 0) continue;
 
       const est = this.estimator(r.asset);
-      const sigma = est.sigma();
+      // Sigma is asked for the horizon being priced — a 60s round and a 15m
+      // round are not two scalings of one number on this feed. See pricing.ts.
+      const sigma = est.sigma(tau);
       const fair = fairUpProbability(spotPx, strike, tau, sigma);
 
       let book: Awaited<ReturnType<typeof orderBook>>;
