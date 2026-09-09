@@ -4,7 +4,7 @@ import { liveRounds, openingPrice, orderBook, resolutions, spot, nowSec } from "
 import { fairUpProbability, VolEstimator } from "./pricing";
 import { store, type Trade } from "./store";
 import { openKey } from "./vault";
-import { agentTake, agentTakeDownViaMint, agentBalance, sizeFor, RISK, type Risk } from "./agenttrader";
+import { agentTake, agentBalance, sizeFor, RISK, type Risk } from "./agenttrader";
 import { redeemAndSweep } from "./settle";
 import { outcomeIds } from "./indexer";
 import { toFeedPrice, toStrike } from "./fmt";
@@ -243,22 +243,33 @@ class Runner {
       const clamp = (p: number) => Math.min(0.98, Math.max(0.02, p));
       const priceUp = bestYesAsk == null ? null : clamp(bestYesAsk + CROSSING_BUFFER);
 
-      // DOWN has two routes. Directly, by crossing a resting SELL_NO — which
-      // almost never exists here. Or synthetically, by minting a complete set
-      // for 1.00 and selling the YES leg into resting BUY_YES demand, which
-      // costs `1 - bestBid`. Take whichever is cheaper; the synthetic route is
-      // usually the only one available at all.
+      // DOWN is taken by crossing resting BUY_YES demand with a `BUY_NO`.
+      //
+      // This file used to insist that match was impossible and mint a complete
+      // set instead, selling the YES leg to be left holding NO. It is not
+      // impossible: `taker=BUY_NO x maker=BUY_YES` is the single most common
+      // match on this venue, and a `BUY_NO` simulated against a live book at a
+      // price at or below the resting bid fills, on rounds carrying no SELL_NO
+      // at all. Two opposite-side buyers do fund a fresh pair.
+      //
+      // The mint route cost more than an extra transaction. It spent a full
+      // 1.00 of collateral per contract before the sell leg returned any of it,
+      // so `outlay` had to be 1.00 and DOWN was capped at `budget` contracts
+      // however cheap the NO was — worst exactly where the edge was biggest. A
+      // 25 tUSDC agent on "medium" could never hold more than 2 contracts of a
+      // 10c DOWN, against 25 on this path, for the same 2.50 of risk.
       const bestYesBid = book.yesBids[0]?.price ?? null;
-      // The YES leg is sold a buffer below the bid to clear, so the set costs
-      // that much more than `1 - bid`. Priced the same way as UP: what the
-      // agent actually pays, not what the screen says.
-      const mintCost = bestYesBid == null ? null : 1 - (bestYesBid - CROSSING_BUFFER);
-      const downDirect = bestNoAsk == null ? null : clamp(bestNoAsk + CROSSING_BUFFER);
-      const downMint = mintCost == null ? null : clamp(mintCost);
-      const priceDown =
-        downDirect == null ? downMint : downMint == null ? downDirect : Math.min(downDirect, downMint);
-      // Which route the executor must use for this round.
-      const downViaMint = priceDown != null && (downDirect == null || (downMint != null && downMint <= downDirect));
+      // A BUY_NO quotes on the YES axis and pays `1 - price`, so crossing a bid
+      // means naming a YES price at or below it — the buffer goes DOWN, not up,
+      // and the NO therefore costs `1 - bid` plus the buffer. Verified on chain:
+      // against a book bid at 0.563, a BUY_NO at 0.513 filled and one at 0.613
+      // did not.
+      const downViaBid = bestYesBid == null ? null : clamp(1 - (bestYesBid - CROSSING_BUFFER));
+      // A resting SELL_NO would be the other way in, but this venue essentially
+      // never has one and the axis its price is quoted on is unverified, so it
+      // is deliberately not priced off. Depth still counts it.
+      const priceDown = downViaBid;
+      void bestNoAsk;
 
       const ctx: Ctx = {
         asset: r.asset,
@@ -273,7 +284,9 @@ class Runner {
         priceDown,
         // Liquidity each direction can actually cross, plus the resting demand
         // for UP, which is the book's lean rather than something we can take.
-        // Synthetic DOWN is limited by how much YES the book will absorb.
+        // DOWN crosses resting BUY_YES, so its depth is that demand — the same
+        // orders `demandUp` reports, counted here because a BUY_NO consumes
+        // them. `noAsks` is included for the rare round that carries one.
         depthDown:
           book.noAsks.reduce((a: number, l) => a + l.qty, 0) +
           book.yesBids.reduce((a: number, l) => a + l.qty, 0),
@@ -298,7 +311,7 @@ class Runner {
         const runners = (await store.runningAgents()).filter((a) => a.deskId === agent.id);
         diag.fundedAgents = Math.max(diag.fundedAgents, runners.length);
         for (const funded of runners) {
-          await this.tradeFor(funded, agent.id, decision, ctx, r, { strike, fair, spotPx, now, downViaMint, bestYesBid });
+          await this.tradeFor(funded, agent.id, decision, ctx, r, { strike, fair, spotPx, now });
         }
       }
     }
@@ -322,12 +335,9 @@ class Runner {
     decision: NonNullable<ReturnType<Agent["decide"]>>,
     ctx: Ctx,
     r: { marketId: string; binaryPoolAddress: string; asset: string; intervalSec: string; expiry: string },
-    meta: {
-      strike: number; fair: number; spotPx: number; now: number;
-      downViaMint: boolean; bestYesBid: number | null;
-    },
+    meta: { strike: number; fair: number; spotPx: number; now: number },
   ) {
-    const { strike, fair, spotPx, now, downViaMint, bestYesBid } = meta;
+    const { strike, fair, spotPx, now } = meta;
 
     // One position per agent per round PER OWNER.
     if (await store.hasPosition(funded.address, r.marketId)) return this.skip("already-positioned");
@@ -336,7 +346,17 @@ class Runner {
 
     // The risk profile gates whether to act at all, not just how much: an agent
     // set to "low" should decline the marginal edges a "high" agent takes.
-    const edge = Math.abs(fair - decision.price);
+    //
+    // Edge is the probability of the side being BOUGHT, less what that side
+    // costs. This used to read `Math.abs(fair - decision.price)`, which is the
+    // wrong probability for a DOWN trade and the wrong sign handling for both:
+    // on a round with fair 0.612 and DOWN at 0.234 the real edge is
+    // 0.388 - 0.234 = 0.154, but the absolute difference reports 0.378, so a
+    // "low" agent sworn to a 10-point floor waved through a 15-point trade
+    // believing it was 38. The `abs` could also turn a negative edge into a
+    // large positive one and clear the floor on a trade worth refusing.
+    const pWin = decision.direction === "UP" ? fair : 1 - fair;
+    const edge = pWin - decision.price;
     if (edge < RISK[risk].minEdge) return this.skip("edge-below-risk-floor");
 
     const open = await store.openPositionCount(funded.address);
@@ -354,14 +374,14 @@ class Runner {
     // conviction FRACTION of it, so a strong read stakes the full slice and a
     // marginal one stakes a fifth. Then capped by what the book can actually
     // absorb.
-    // Minting a complete set costs a whole 1.00 of collateral per contract, and
-    // only gives most of it back when the YES leg sells. Sizing against the net
-    // price instead of that outlay is how a 5.00 budget turned into a 23.00
-    // mint that emptied a wallet: `budget / 0.22` is 23 contracts, and 23
-    // contracts cost 23.00 to mint, not 5.00.
-    const useMint = decision.direction === "DOWN" && downViaMint && bestYesBid != null;
-    const outlay = useMint ? 1 : limitPrice;
-    const budgeted = sizeFor(balance * decision.contracts, outlay, risk);
+    //
+    // Both directions now cost exactly their premium, because both are a single
+    // crossing order. Under the old mint route DOWN had to be sized against a
+    // full 1.00 per contract — the whole collateral a complete set costs before
+    // its YES leg sells — which capped a 10c DOWN at two contracts on a 25 tUSDC
+    // "medium" wallet and left four fifths of the risk budget unspent. It bit
+    // hardest on the cheapest contracts, which is where the edge was largest.
+    const budgeted = sizeFor(balance * decision.contracts, limitPrice, risk);
     const contracts = Math.min(budgeted, Math.floor(available));
     if (contracts < 1) return this.skip(balance < 1 ? "agent-unfunded" : "size-below-one");
 
@@ -374,23 +394,14 @@ class Runner {
     // Already buffered past the quote, so this crosses without paying twice.
     const limit = limitPrice;
 
-    const res = useMint
-      ? await agentTakeDownViaMint({
-          key: key as `0x${string}`,
-          pool: r.binaryPoolAddress as `0x${string}`,
-          contracts,
-          // Accept the buffer below the bid so the YES leg actually clears.
-          sellLimit: Math.max(0.02, bestYesBid - CROSSING_BUFFER),
-          expiry: Number(r.expiry),
-        })
-      : await agentTake({
-          key: key as `0x${string}`,
-          pool: r.binaryPoolAddress as `0x${string}`,
-          direction: decision.direction,
-          limitPrice: limit,
-          contracts,
-          expiry: Number(r.expiry),
-        });
+    const res = await agentTake({
+      key: key as `0x${string}`,
+      pool: r.binaryPoolAddress as `0x${string}`,
+      direction: decision.direction,
+      limitPrice: limit,
+      contracts,
+      expiry: Number(r.expiry),
+    });
     if (!res.filled) {
       this.status.lastExecError = res.error ?? null;
       return this.skip("not-filled");
